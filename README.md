@@ -1,4 +1,5 @@
 # 💼 job_scraper
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Python job scraper using **Requests** to pull live listings from the Remote OK public API and export clean CSV files for analysis.
 
