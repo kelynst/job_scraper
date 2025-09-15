@@ -9,19 +9,32 @@ USER_AGENT = "KelynJobScraper/1.1 (+https://github.com/kelynst)"  # safe, profes
 
 def fetch_jobs(tag: str | None) -> list[dict]:
     """
-    Fetch jobs from RemoteOK API.
-    If tag is provided, use /api/{tag}; else use /api.
-    Returns a list of job dicts (skipping the first 'metadata' element).
+    Fetch jobs from the Remote OK public API (single endpoint) and
+    optionally filter by tag locally.
     """
-    url = API_URL if not tag else f"{API_URL}/{tag}"
-    r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
+    r = requests.get(API_URL, headers={"User-Agent": USER_AGENT}, timeout=30)
     r.raise_for_status()
     data = r.json()
 
-    # RemoteOK's first element is API metadata; jobs start at index 1
+    # First element is API metadata; jobs follow
     if isinstance(data, list) and data and isinstance(data[0], dict) and "legal" in data[0]:
-        return data[1:]
-    return data if isinstance(data, list) else []
+        jobs = data[1:]
+    else:
+        jobs = data if isinstance(data, list) else []
+
+    if tag:
+        needle = tag.lower()
+
+        def matches(j: dict) -> bool:
+            tags = j.get("tags") or []
+            tags_lower = [str(x).lower() for x in tags] if isinstance(tags, list) else [str(tags).lower()]
+            # Also allow a loose match in position/description as a fallback
+            text = f"{j.get('position', '')} {j.get('description', '')}".lower()
+            return (needle in tags_lower) or (needle in text)
+
+        jobs = [j for j in jobs if matches(j)]
+
+    return jobs
 
 
 def parse_iso_to_utc(date_str: str) -> datetime | None:
@@ -37,7 +50,7 @@ def parse_iso_to_utc(date_str: str) -> datetime | None:
 
 
 def normalize_job(job: dict) -> dict:
-    """Pick and normalize a few useful fields."""
+    """Pick and normalize a few useful fields for CSV output."""
     def get(key, default=""):
         val = job.get(key, default)
         return "" if val is None else val
@@ -79,13 +92,12 @@ def main():
     jobs = fetch_jobs(tag)
     print(f"Fetched {len(jobs)} job rows from API")
 
-    # Prepare optional date cutoff
+    # Optional date cutoff
     cutoff_utc = None
     if days:
         cutoff_utc = datetime.now(timezone.utc) - timedelta(days=days)
         print(f"Filtering to jobs posted since {cutoff_utc.isoformat()} (last {days} days)")
 
-    count = 0
     written = 0
     fieldnames = [
         "id", "position", "company", "location", "salary",
@@ -103,11 +115,9 @@ def main():
                 if not posted_dt or posted_dt < cutoff_utc:
                     continue
 
-            row = normalize_job(job)
-            writer.writerow(row)
+            writer.writerow(normalize_job(job))
             written += 1
-            count += 1
-            if limit and count >= limit:
+            if limit and written >= limit:
                 break
 
     print(f"Done. Wrote {written} rows to {args.out}")
